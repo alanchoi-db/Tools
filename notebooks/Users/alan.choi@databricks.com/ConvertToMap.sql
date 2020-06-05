@@ -1,0 +1,76 @@
+-- Databricks notebook source
+-- MAGIC %md
+-- MAGIC # Generate Map Based Table
+
+-- COMMAND ----------
+
+-- MAGIC %python
+-- MAGIC 
+-- MAGIC def get_types():
+-- MAGIC   return ['double','bigint','date','float','int','smallint','string','timestamp']
+-- MAGIC 
+-- MAGIC def gen_map_table(db, tbl, preserved_cols):
+-- MAGIC   descTbl = sql('desc %s.%s' %(db,tbl))
+-- MAGIC   col_to_type = {}
+-- MAGIC   for row in descTbl.rdd.collect():
+-- MAGIC     col_to_type[row['col_name'].lower()] = row['data_type']
+-- MAGIC   create_tbl = """create table %s.%s_map(""" %(db, tbl)
+-- MAGIC   for pc in preserved_cols:
+-- MAGIC     col_type = col_to_type[pc.lower()]
+-- MAGIC     create_tbl += pc.lower() + ' ' + col_type + ','
+-- MAGIC   for t in get_types():
+-- MAGIC     create_tbl += '%s_map  map<string, %s>,' % (t,t)
+-- MAGIC   create_tbl = create_tbl[:-1]
+-- MAGIC   create_tbl += ') using delta '
+-- MAGIC   sql('drop table if exists %s.%s_map' % (db,tbl))
+-- MAGIC   print(create_tbl + ";\n")
+-- MAGIC   sql(create_tbl)
+-- MAGIC 
+-- MAGIC def populate_map_table(db, tbl, preserved_cols):
+-- MAGIC   stmt = "insert into %s.%s_map select " % (db, tbl)
+-- MAGIC   data_types = get_types()
+-- MAGIC   for col in preserved_cols:
+-- MAGIC     stmt += col + ','
+-- MAGIC   type_to_map_expr = {}
+-- MAGIC   for t in data_types:
+-- MAGIC     type_to_map_expr[t] = 'map('
+-- MAGIC   descTbl = sql('desc %s.%s' %(db,tbl))
+-- MAGIC   for row in descTbl.rdd.collect():
+-- MAGIC     type_to_map_expr[row['data_type']] += """'%s',%s,""" % (row['col_name'].lower(),row['col_name'].lower())
+-- MAGIC   for t in data_types:
+-- MAGIC     if (type_to_map_expr[t].endswith(',')):
+-- MAGIC       type_to_map_expr[t] = type_to_map_expr[t][:-1]      
+-- MAGIC     type_to_map_expr[t] += ')'
+-- MAGIC     stmt += type_to_map_expr[t] + ','
+-- MAGIC   stmt = stmt[:-1]
+-- MAGIC   stmt += ' from %s.%s' %(db, tbl)
+-- MAGIC   print(stmt + ";\n")
+-- MAGIC   sql(stmt)
+-- MAGIC   
+-- MAGIC def generate_view(db, tbl, preserved_cols):
+-- MAGIC   stmt = 'create or replace view %s.%s_view as select ' % (db,tbl)
+-- MAGIC   for col in preserved_cols:
+-- MAGIC     stmt += col + ','
+-- MAGIC   descTbl = sql('desc %s.%s' %(db,tbl))
+-- MAGIC   for row in descTbl.rdd.collect():
+-- MAGIC     if (row['col_name'].lower() in preserved_cols):
+-- MAGIC       continue
+-- MAGIC     stmt += """%s_map['%s'] as %s,""" % (row['data_type'], row['col_name'].lower(), row['col_name'].lower())
+-- MAGIC   stmt = stmt[:-1]
+-- MAGIC   stmt += ' from %s.%s_map' %(db, tbl)
+-- MAGIC   print(stmt + ";\n")
+-- MAGIC   sql(stmt)
+-- MAGIC 
+-- MAGIC def convert_to_map(db, tbl, preserved_cols):
+-- MAGIC   gen_map_table(db, tbl, preserved_cols)
+-- MAGIC   populate_map_table(db, tbl, preserved_cols)
+-- MAGIC   generate_view(db, tbl, preserved_cols)
+
+-- COMMAND ----------
+
+-- MAGIC %python
+-- MAGIC convert_to_map('alanchoi', 'c2k', ['c0','c10','c34'])
+
+-- COMMAND ----------
+
+select * from alanchoi.c2k_view where c56 = 123;
